@@ -2,7 +2,8 @@
  *
  * Copyright (C) 2023 Intel Corporation
  *
- * Under the Apache License v2.0 with LLVM Exceptions. See LICENSE.TXT.
+ * Part of the Unified-Runtime Project, under the Apache License v2.0 with LLVM Exceptions.
+ * See LICENSE.TXT
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
  *
  */
@@ -22,7 +23,8 @@ enum umf_result_t
 umfMemoryProviderCreate(const struct umf_memory_provider_ops_t *ops,
                         void *params, umf_memory_provider_handle_t *hProvider) {
     umf_memory_provider_handle_t provider =
-        malloc(sizeof(struct umf_memory_provider_t));
+        (umf_memory_provider_handle_t)malloc(
+            sizeof(struct umf_memory_provider_t));
     if (!provider) {
         return UMF_RESULT_ERROR_OUT_OF_HOST_MEMORY;
     }
