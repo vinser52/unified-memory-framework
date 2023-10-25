@@ -21,19 +21,22 @@
 #include "umf.h"
 #include "ze_memory_provider.h"
 
-typedef struct ze_memory_provider_t {
+typedef struct ze_memory_provider_t
+{
     ze_context_handle_t context;
     ze_device_handle_t device;
     ze_device_mem_alloc_desc_t device_mem_alloc_desc;
 } ze_memory_provider_t;
 
-enum umf_result_t ze_memory_provider_initialize(void *params, void **provider) {
+enum umf_result_t ze_memory_provider_initialize(void *params, void **provider)
+{
     ze_memory_provider_params_t *ze_params =
         (ze_memory_provider_params_t *)params;
 
     ze_memory_provider_t *ze_provider =
         (ze_memory_provider_t *)malloc(sizeof(ze_memory_provider_t));
-    if (!ze_provider) {
+    if (!ze_provider)
+    {
         return UMF_RESULT_ERROR_OUT_OF_HOST_MEMORY;
     }
 
@@ -54,16 +57,20 @@ enum umf_result_t ze_memory_provider_initialize(void *params, void **provider) {
     return UMF_RESULT_SUCCESS;
 }
 
-void ze_memory_provider_finalize(void *provider) {
+void ze_memory_provider_finalize(void *provider)
+{
     ze_memory_provider_t *ze_provider = (struct ze_memory_provider_t *)provider;
 
-    // we don't alloc anything so just return
+    free(ze_provider);
 }
 
 static enum umf_result_t ze_memory_provider_alloc(void *provider, size_t size,
                                                   size_t alignment,
-                                                  void **resultPtr) {
+                                                  void **resultPtr)
+{
     ze_memory_provider_t *ze_provider = (struct ze_memory_provider_t *)provider;
+
+    printf("ZE_ALLOC %lu\n", size);
 
     zeMemAllocDevice(ze_provider->context, &ze_provider->device_mem_alloc_desc,
                      size, alignment, ze_provider->device, resultPtr);
@@ -73,8 +80,11 @@ static enum umf_result_t ze_memory_provider_alloc(void *provider, size_t size,
 }
 
 static enum umf_result_t ze_memory_provider_free(void *provider, void *ptr,
-                                                 size_t bytes) {
+                                                 size_t bytes)
+{
     ze_memory_provider_t *ze_provider = (struct ze_memory_provider_t *)provider;
+
+    printf("ZE_FREE %lu\n", bytes);
 
     zeMemFree(ze_provider->context, ptr);
 
@@ -84,18 +94,27 @@ static enum umf_result_t ze_memory_provider_free(void *provider, void *ptr,
 
 void ze_memory_provider_get_last_native_error(void *provider,
                                               const char **ppMessage,
-                                              int32_t *pError) {
+                                              int32_t *pError)
+{
     //
 }
 
 static enum umf_result_t
 ze_memory_provider_get_min_page_size(void *provider, void *ptr,
-                                     size_t *pageSize) {
+                                     size_t *pageSize)
+{
     *pageSize = 0; // TODO
     return UMF_RESULT_SUCCESS;
 }
 
-const char *ze_memory_provider_get_name(void *provider) { return "ZE"; }
+static enum umf_result_t
+ze_memory_provider_get_recommended_page_size(void *provider, size_t size, size_t *pageSize)
+{
+    *pageSize = 1024; // TODO
+    return UMF_RESULT_SUCCESS;
+}
+
+const char *ze_memory_provider_get_name(void *provider) { return "UMF_ZE"; }
 
 struct umf_memory_provider_ops_t UMF_ZE_MEMORY_PROVIDER_OPS = {
     .version = UMF_VERSION_CURRENT,
@@ -104,6 +123,7 @@ struct umf_memory_provider_ops_t UMF_ZE_MEMORY_PROVIDER_OPS = {
     .alloc = ze_memory_provider_alloc,
     .free = ze_memory_provider_free,
     .get_last_native_error = ze_memory_provider_get_last_native_error,
+    .get_recommended_page_size = ze_memory_provider_get_recommended_page_size,
     .get_min_page_size = ze_memory_provider_get_min_page_size,
     .get_name = ze_memory_provider_get_name,
 };

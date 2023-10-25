@@ -21,6 +21,7 @@
 
 #include "umf/disjoint_pool/disjoint_pool.h"
 #include "umf/memory_providers/ze_memory_provider.h"
+#include "umf/memory_providers/fixed_memory_provider.h"
 
 ze_context_handle_t context;
 ze_device_handle_t device;
@@ -57,21 +58,38 @@ int main()
 
     umf_memory_provider_handle_t ze_memory_provider;
     umfMemoryProviderCreate(&UMF_ZE_MEMORY_PROVIDER_OPS,
-                            &ze_memory_provider_params, &ze_memory_provider);
+                            &ze_memory_provider_params,
+                            &ze_memory_provider);
     assert(ze_memory_provider);
 
-    disjoint_memory_pool_params_t disjoint_memory_pool_params = {
-        .max_size = 100 // currently not used
-    };
+    const size_t KB = 1024;
+    const size_t MB = 1024 * KB;
+
+    fixed_memory_provider_params_t fixed_memory_provider_params = {
+        .init_buffer = 0,
+        .init_buffer_size = 0,
+        .upstream_memory_provider = ze_memory_provider,
+        .soft_limit = 512 * MB,
+        .hard_limit = 1024 * MB};
+
+    umf_memory_provider_handle_t fixed_memory_provider;
+    umfMemoryProviderCreate(&UMF_FIXED_MEMORY_PROVIDER_OPS,
+                            &fixed_memory_provider_params,
+                            &fixed_memory_provider);
+    assert(fixed_memory_provider);
+
+    disjoint_memory_pool_params_t disjoint_memory_pool_params = {/* TODO */};
 
     umf_memory_pool_handle_t ze_disjoint_memory_pool;
-    umfPoolCreate(&DISJOINT_POOL_OPS, &ze_memory_provider, 1, NULL,
+    umfPoolCreate(&DISJOINT_POOL_OPS, &fixed_memory_provider, 1, NULL,
                   &ze_disjoint_memory_pool);
     assert(ze_disjoint_memory_pool);
 
     void *ptr = umfPoolMalloc(ze_disjoint_memory_pool, 100);
     assert(ptr);
     umfFree(ptr);
+
+    printf("SUCCESS\n");
 
     return 0;
 }

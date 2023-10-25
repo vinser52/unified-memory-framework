@@ -200,7 +200,7 @@ static enum umf_result_t os_free(void *provider, void *ptr, size_t bytes) {
 void os_get_last_native_error(void *provider, const char **ppMessage,
                               int32_t *pError) {}
 
-const char *os_get_name(void *provider) { return "OS"; }
+const char *os_get_name(void *provider) { return "UMF_OS"; }
 
 struct umf_memory_provider_ops_t OS_MEMORY_PROVIDER_OPS = {
     .version = UMF_VERSION_CURRENT,
