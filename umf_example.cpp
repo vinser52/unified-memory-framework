@@ -69,7 +69,8 @@ int main()
         .init_buffer = 0,
         .init_buffer_size = 0,
         .upstream_memory_provider = ze_memory_provider,
-        .soft_limit = 512 * MB,
+        .immediate_init = false,
+        .soft_limit = 384 * MB,
         .hard_limit = 1024 * MB};
 
     umf_memory_provider_handle_t fixed_memory_provider;
@@ -85,9 +86,44 @@ int main()
                   &ze_disjoint_memory_pool);
     assert(ze_disjoint_memory_pool);
 
-    void *ptr = umfPoolMalloc(ze_disjoint_memory_pool, 100);
-    assert(ptr);
-    umfFree(ptr);
+    // test 1
+
+    size_t s1 = 74659 * KB;
+    size_t s2 = 8206 * KB;
+
+    // s1
+    for (int j = 0; j < 2; j++)
+    {
+        void *t[6] = {0};
+        for (int i = 0; i < 6; i++)
+        {
+            t[i] = umfPoolMalloc(ze_disjoint_memory_pool, s1);
+            assert(t[i]);
+        }
+
+        for (int i = 0; i < 6; i++)
+        {
+            umf_result_t res = umfPoolFree(ze_disjoint_memory_pool, t[i]);
+            assert(res == UMF_RESULT_SUCCESS);
+        }
+    }
+
+    // s2
+    for (int j = 0; j < 2; j++)
+    {
+        void *t[6] = {0};
+        for (int i = 0; i < 6; i++)
+        {
+            t[i] = umfPoolMalloc(ze_disjoint_memory_pool, s2);
+            assert(t[i]);
+        }
+
+        for (int i = 0; i < 6; i++)
+        {
+            umf_result_t res = umfPoolFree(ze_disjoint_memory_pool, t[i]);
+            assert(res == UMF_RESULT_SUCCESS);
+        }
+    }
 
     printf("SUCCESS\n");
 

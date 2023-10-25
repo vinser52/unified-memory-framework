@@ -26,6 +26,9 @@ typedef struct ze_memory_provider_t
     ze_context_handle_t context;
     ze_device_handle_t device;
     ze_device_mem_alloc_desc_t device_mem_alloc_desc;
+
+    // debug
+    size_t curr_used;
 } ze_memory_provider_t;
 
 enum umf_result_t ze_memory_provider_initialize(void *params, void **provider)
@@ -51,6 +54,8 @@ enum umf_result_t ze_memory_provider_initialize(void *params, void **provider)
     // TODO add deep copy of mem_alloc_desc
     assert(ze_params->device_mem_alloc_desc.pNext == NULL);
 
+    ze_provider->curr_used = 0;
+
     *provider = ze_provider;
 
     // TODO check results
@@ -70,10 +75,12 @@ static enum umf_result_t ze_memory_provider_alloc(void *provider, size_t size,
 {
     ze_memory_provider_t *ze_provider = (struct ze_memory_provider_t *)provider;
 
-    printf("ZE_ALLOC %lu\n", size);
-
     zeMemAllocDevice(ze_provider->context, &ze_provider->device_mem_alloc_desc,
                      size, alignment, ze_provider->device, resultPtr);
+
+    // debug
+    ze_provider->curr_used += size;
+    printf("ZE_ALLOC (device) %lu curr %lu\n", size, ze_provider->curr_used);
 
     // TODO check results
     return UMF_RESULT_SUCCESS;
@@ -84,7 +91,9 @@ static enum umf_result_t ze_memory_provider_free(void *provider, void *ptr,
 {
     ze_memory_provider_t *ze_provider = (struct ze_memory_provider_t *)provider;
 
-    printf("ZE_FREE %lu\n", bytes);
+    // debug
+    ze_provider->curr_used -= bytes;
+    printf("ZE_FREE (device) %lu curr %lu\n", bytes, ze_provider->curr_used);
 
     zeMemFree(ze_provider->context, ptr);
 

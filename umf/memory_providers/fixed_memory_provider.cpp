@@ -69,31 +69,47 @@ enum umf_result_t fixed_memory_provider_initialize(void *params, void **provider
         return UMF_RESULT_ERROR_MEMORY_PROVIDER_SPECIFIC;
     }
 
-    fixed_provider->free_list_head = (block_t *)malloc(sizeof(block_t));
-    fixed_provider->free_list_head->next = NULL;
-    fixed_provider->free_list_head->used_size = 0;
-    fixed_provider->free_list_head->size = fixed_params->soft_limit;
-
     fixed_provider->init_buffer = fixed_params->init_buffer;
     fixed_provider->init_buffer_size = fixed_params->init_buffer_size;
     fixed_provider->upstream_memory_provider = fixed_params->upstream_memory_provider;
 
     fixed_provider->soft_limit = fixed_params->soft_limit;
-    fixed_provider->current_size = fixed_params->soft_limit;
     fixed_provider->hard_limit = fixed_params->hard_limit;
 
     if (fixed_provider->init_buffer)
     {
         fixed_provider->free_list_head->upstream = false;
+        fixed_provider->current_size = fixed_params->init_buffer_size;
     }
-    else if (fixed_provider->upstream_memory_provider && fixed_provider->soft_limit)
+    else if (fixed_provider->upstream_memory_provider &&
+             fixed_provider->soft_limit &&
+             fixed_params->immediate_init)
     {
+        printf("FIXED_ALLOC (init_upstream) %lu\n", fixed_provider->soft_limit);
+
         umfMemoryProviderAlloc(fixed_provider->upstream_memory_provider,
                                fixed_provider->soft_limit, 0,
                                &fixed_provider->free_list_head->data);
         // TODO error handling
         assert(fixed_provider->free_list_head->data);
         fixed_provider->free_list_head->upstream = true;
+        fixed_provider->current_size = fixed_params->soft_limit;
+    }
+    else
+    {
+        fixed_provider->current_size = 0;
+    }
+
+    if (fixed_provider->current_size > 0)
+    {
+        fixed_provider->free_list_head = (block_t *)malloc(sizeof(block_t));
+        fixed_provider->free_list_head->next = NULL;
+        fixed_provider->free_list_head->used_size = 0;
+        fixed_provider->free_list_head->size = fixed_provider->current_size;
+    }
+    else
+    {
+        fixed_provider->free_list_head = NULL;
     }
 
     *provider = fixed_provider;
@@ -131,26 +147,26 @@ static enum umf_result_t fixed_memory_provider_alloc(void *provider, size_t size
 {
     fixed_memory_provider_t *fixed_provider = (struct fixed_memory_provider_t *)provider;
     assert(fixed_provider);
-    assert(fixed_provider->free_list_head);
 
     if (pthread_mutex_lock(&fixed_provider->lock) != 0)
         return UMF_RESULT_ERROR_MEMORY_PROVIDER_SPECIFIC;
 
     if ((fixed_provider->hard_limit) > 0 &&
         (fixed_provider->current_size + size > fixed_provider->hard_limit))
+    {
+        printf("FIXED_ALLOC ERROR OOM\n");
         // TODO - out of provider memory?
         return UMF_RESULT_ERROR_MEMORY_PROVIDER_SPECIFIC;
+    }
 
     block_t *prev = NULL;
     block_t *curr = fixed_provider->free_list_head;
     while (curr)
     {
-        assert(curr->size > curr->used_size);
+        assert(curr->size >= curr->used_size);
         size_t size_left = curr->size - curr->used_size;
         if (size_left > size)
         {
-            printf("FIXED_ALLOC (new block) %lu\n", size);
-
             // split
             block_t *new_block = (block_t *)malloc(sizeof(block_t));
             new_block->size = size;
@@ -173,6 +189,10 @@ static enum umf_result_t fixed_memory_provider_alloc(void *provider, size_t size
             *resultPtr = new_block->data;
             fixed_provider->current_size += size;
 
+            printf("FIXED_ALLOC (new_block) %lu curr %lu\n",
+                   size,
+                   fixed_provider->current_size);
+
             if (pthread_mutex_unlock(&fixed_provider->lock) != 0)
                 return UMF_RESULT_ERROR_MEMORY_PROVIDER_SPECIFIC;
 
@@ -180,7 +200,9 @@ static enum umf_result_t fixed_memory_provider_alloc(void *provider, size_t size
         }
         else if (size_left == size)
         {
-            printf("FIXED_ALLOC (same block) %lu\n", size);
+            printf("FIXED_ALLOC (same_block) %lu curr %lu\n",
+                   size,
+                   fixed_provider->current_size);
 
             *resultPtr = curr->data;
             curr->used_size = size;
@@ -199,12 +221,9 @@ static enum umf_result_t fixed_memory_provider_alloc(void *provider, size_t size
     // no suitable block - try to get more memory from the upstream provider
     if (fixed_provider->upstream_memory_provider)
     {
-        printf("FIXED_ALLOC (upstream) %lu\n", size);
+        umfMemoryProviderAlloc(fixed_provider->upstream_memory_provider, size, alignment, resultPtr);
 
-        void *ptr = NULL;
-        umfMemoryProviderAlloc(fixed_provider->upstream_memory_provider, size, alignment, &ptr);
-
-        if (ptr == NULL)
+        if (*resultPtr == NULL)
             return UMF_RESULT_ERROR_MEMORY_PROVIDER_SPECIFIC;
 
         block_t *new_block = (block_t *)malloc(sizeof(block_t));
@@ -212,10 +231,12 @@ static enum umf_result_t fixed_memory_provider_alloc(void *provider, size_t size
         new_block->used_size = size;
         new_block->upstream = true;
         new_block->next = fixed_provider->free_list_head;
-        new_block->data = ptr;
+        new_block->data = *resultPtr;
 
         fixed_provider->free_list_head = new_block;
         fixed_provider->current_size += size;
+
+        printf("FIXED_ALLOC (upstream) %lu curr %lu\n", size, fixed_provider->current_size);
 
         if (pthread_mutex_unlock(&fixed_provider->lock) != 0)
             return UMF_RESULT_ERROR_MEMORY_PROVIDER_SPECIFIC;
@@ -234,7 +255,7 @@ static enum umf_result_t fixed_memory_provider_free(void *provider, void *ptr,
 
     block_t *block = fixed_provider->free_list_head;
     block_t *prev = NULL;
-    while (block->data != ptr)
+    while (block && block->data != ptr)
     {
         prev = block;
         block = block->next;
@@ -246,10 +267,10 @@ static enum umf_result_t fixed_memory_provider_free(void *provider, void *ptr,
     if ((fixed_provider->current_size > fixed_provider->soft_limit) &&
         block->upstream)
     {
-        printf("FIXED_FREE (soft limit: %lu vs curr %lu) %lu\n",
+        printf("FIXED_FREE (soft_limit_%lu) %lu curr %lu\n",
                fixed_provider->soft_limit,
-               fixed_provider->current_size,
-               block->size);
+               block->size,
+               fixed_provider->current_size);
 
         umfMemoryProviderFree(fixed_provider->upstream_memory_provider, block->data, block->size);
 
@@ -262,17 +283,17 @@ static enum umf_result_t fixed_memory_provider_free(void *provider, void *ptr,
             fixed_provider->free_list_head = block->next;
         }
 
+        fixed_provider->current_size -= block->size;
         free(block);
+        return UMF_RESULT_SUCCESS;
     }
-    else
-    {
-        // TODO implement blocks coalescing
-        printf("FIXED_FREE (return block to pool) %lu\n",
-               block->size);
+    // else
+    // TODO implement blocks coalescing
+    printf("FIXED_FREE (return_block_to_pool) %lu curr %lu\n",
+           block->size,
+           fixed_provider->current_size - block->size);
 
-        block->used_size = 0;
-    }
-
+    block->used_size = 0;
     fixed_provider->current_size -= block->size;
 
     return UMF_RESULT_SUCCESS;

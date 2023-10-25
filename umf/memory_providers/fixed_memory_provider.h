@@ -23,6 +23,7 @@ typedef struct fixed_memory_provider_params_t {
     size_t init_buffer_size;
 
     umf_memory_provider_handle_t upstream_memory_provider;
+    bool immediate_init; // default is false
     
     size_t soft_limit;
     size_t hard_limit;
