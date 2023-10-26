@@ -26,6 +26,9 @@ typedef struct ze_memory_provider_params_t {
 
 extern struct umf_memory_provider_ops_t UMF_ZE_MEMORY_PROVIDER_OPS;
 
+// debug
+extern size_t ze_curr_used;
+
 #ifdef __cplusplus
 }
 #endif

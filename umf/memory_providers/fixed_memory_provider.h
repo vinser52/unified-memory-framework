@@ -23,10 +23,11 @@ typedef struct fixed_memory_provider_params_t {
     size_t init_buffer_size;
 
     umf_memory_provider_handle_t upstream_memory_provider;
-    bool immediate_init; // default is false
+    bool immediate_init; // pre-allocate soft limit - default is false
     
     size_t soft_limit;
     size_t hard_limit;
+    // TODO - should we allow changing soft/hard limits in runtime and add an API for it?
 } fixed_memory_provider_params_t;
 
 extern struct umf_memory_provider_ops_t UMF_FIXED_MEMORY_PROVIDER_OPS;
