@@ -5,8 +5,10 @@
 #include "base.hpp"
 
 #include "cpp_helpers.hpp"
+#include "ipcFixtures.hpp"
 
 #include <umf/memory_provider.h>
+#include <umf/pools/pool_scalable.h>
 #include <umf/providers/provider_os_memory.h>
 
 using umf_test::test;
@@ -300,3 +302,20 @@ TEST_P(umfProviderTest, purge_force_INVALID_POINTER) {
     verify_last_native_error(provider.get(),
                              UMF_OS_RESULT_ERROR_PURGE_FORCE_FAILED);
 }
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(umfIpcTest);
+#if (defined UMF_POOL_SCALABLE_ENABLED)
+umf_os_memory_provider_params_t osMemoryProviderParamsShared() {
+    auto params = umfOsMemoryProviderParamsDefault();
+    params.visibility = UMF_MEM_MAP_SHARED;
+    return params;
+}
+auto os_params = osMemoryProviderParamsShared();
+
+HostMemoryAccessor hostAccessor;
+INSTANTIATE_TEST_SUITE_P(osProviderTest, umfIpcTest,
+                         ::testing::Values(ipcTestParams{
+                             umfScalablePoolOps(), nullptr,
+                             umfOsMemoryProviderOps(), &os_params,
+                             &hostAccessor}));
+#endif

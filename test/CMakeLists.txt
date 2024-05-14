@@ -151,6 +151,10 @@ if(LINUX) # OS-specific functions are implemented only for Linux now
         NAME provider_os_memory
         SRCS provider_os_memory.cpp
         LIBS ${UMF_UTILS_FOR_TEST})
+    if(UMF_POOL_SCALABLE_ENABLED)
+        target_compile_definitions(umf_test-provider_os_memory
+                                   PRIVATE UMF_POOL_SCALABLE_ENABLED=1)
+    endif()
     add_umf_test(
         NAME provider_os_memory_multiple_numa_nodes
         SRCS provider_os_memory_multiple_numa_nodes.cpp
