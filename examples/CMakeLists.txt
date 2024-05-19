@@ -162,3 +162,37 @@ else()
             "IPC examples with UMF pool API are supported on Linux only - skipping"
     )
 endif()
+
+if(LINUX AND UMF_BUILD_GPU_EXAMPLES AND UMF_BUILD_LIBUMF_POOL_DISJOINT AND UMF_BUILD_LEVEL_ZERO_PROVIDER)
+    set(BASE_NAME ipc_level_zero_ipcapi)
+    set(EXAMPLE_NAME umf_example_${BASE_NAME})
+
+    foreach(loop_var IN ITEMS "producer" "consumer")
+        set(EX_NAME ${EXAMPLE_NAME}_${loop_var})
+        add_umf_executable(
+            NAME ${EX_NAME}
+            SRCS basic/${BASE_NAME}_${loop_var}.c basic/provider_ipc_level_zero_getpidfd.c
+            LIBS disjoint_pool ze_loader umf)
+
+        target_include_directories(
+            ${EX_NAME} PRIVATE ${UMF_CMAKE_SOURCE_DIR}/src/utils
+                               ${UMF_CMAKE_SOURCE_DIR}/include)
+
+        target_link_directories(${EX_NAME} PRIVATE ${LIBHWLOC_LIBRARY_DIRS})
+    endforeach(loop_var)
+
+    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/basic/${BASE_NAME}.sh
+         DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
+
+    add_test(
+        NAME ${EXAMPLE_NAME}
+        COMMAND ${BASE_NAME}.sh
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+
+    set_tests_properties(${EXAMPLE_NAME} PROPERTIES LABELS "example")
+else()
+    message(
+        STATUS
+            "IPC shared memory example with UMF pool API is supported on Linux only - skipping"
+    )
+endif()
