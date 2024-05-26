@@ -21,7 +21,9 @@
 
 #define INET_ADDR "127.0.0.1"
 #define MSG_SIZE 1024
-#define SIZE_SHM 1024
+#define SIZE_SHM 4ull * 1024ull * 1024ull
+#define BUFFER_SIZE 32ull * 1024ull
+#define NUM_BUFFERS 128ull
 
 int producer_connect_to_consumer(int port) {
     struct sockaddr_in consumer_addr;
@@ -138,39 +140,19 @@ int main(int argc, char *argv[]) {
         goto err_destroy_L0_context;
     }
 
-    void *IPC_shared_memory;
+    void *IPC_shared_memory_base = NULL;
+    void *IPC_shared_memory[NUM_BUFFERS];
     size_t size_IPC_shared_memory = SIZE_SHM;
-    IPC_shared_memory = umfPoolMalloc(hPool, size_IPC_shared_memory);
-    if (IPC_shared_memory == NULL) {
+    IPC_shared_memory_base = umfPoolMalloc(hPool, size_IPC_shared_memory);
+    if (IPC_shared_memory_base == NULL) {
         fprintf(stderr, "[producer] ERROR: allocating memory failed\n");
         ret = -1;
         goto err_destroy_pool;
     }
 
-    // save a random number (&hPool) in the shared memory
-    unsigned long long SHM_number_1 = (unsigned long long)&hPool;
-    ret = level_zero_copy(L0_context, device, IPC_shared_memory, &SHM_number_1,
-                          sizeof(SHM_number_1));
-    if (ret != 0) {
-        fprintf(stderr,
-                "[producer] ERROR: writing to the Level Zero memory failed\n");
-        goto err_free_IPC_shared_memory;
-    }
-
-    fprintf(stderr, "[producer] My shared memory contains a number: %llu\n",
-            SHM_number_1);
-
     // get the IPC handle
-    size_t IPC_handle_size;
-    umf_ipc_handle_t IPC_handle;
-    umf_result_t umf_result =
-        umfGetIPCHandle(IPC_shared_memory, &IPC_handle, &IPC_handle_size);
-    if (umf_result != UMF_RESULT_SUCCESS) {
-        fprintf(stderr, "[producer] ERROR: getting the IPC handle failed\n");
-        goto err_free_IPC_shared_memory;
-    }
-
-    fprintf(stderr, "[producer] Got the IPC handle\n");
+    size_t IPC_handle_size[NUM_BUFFERS];
+    umf_ipc_handle_t IPC_handle[NUM_BUFFERS];
 
     // connect to the consumer
     producer_socket = producer_connect_to_consumer(port);
@@ -178,117 +160,151 @@ int main(int argc, char *argv[]) {
         goto err_PutIPCHandle;
     }
 
-    // send a size of the IPC_handle to the consumer
-    ssize_t len =
-        send(producer_socket, &IPC_handle_size, sizeof(IPC_handle_size), 0);
-    if (len < 0) {
-        fprintf(stderr, "[producer] ERROR: unable to send the message\n");
-        goto err_close_producer_socket;
-    }
+    for (size_t i = 0; i < NUM_BUFFERS; i++) {
+        IPC_shared_memory[i] =
+            (void *)((uintptr_t)IPC_shared_memory_base + i * BUFFER_SIZE);
 
-    fprintf(stderr,
+        // save a random number (&hPool) in the shared memory
+        unsigned long long SHM_number_1 = (unsigned long long)&hPool;
+        ret = level_zero_copy(L0_context, device, IPC_shared_memory[i],
+                              &SHM_number_1, sizeof(SHM_number_1));
+        if (ret != 0) {
+            fprintf(
+                stderr,
+                "[producer] ERROR: writing to the Level Zero memory failed\n");
+            goto err_free_IPC_shared_memory;
+        }
+
+        fprintf(stderr, "[producer] My shared memory contains a number: %llu\n",
+                SHM_number_1);
+
+        umf_result_t umf_result = umfGetIPCHandle(
+            IPC_shared_memory[i], &(IPC_handle[i]), &(IPC_handle_size[i]));
+        if (umf_result != UMF_RESULT_SUCCESS) {
+            fprintf(stderr,
+                    "[producer] ERROR: getting the IPC handle failed\n");
+            goto err_free_IPC_shared_memory;
+        }
+
+        fprintf(stderr, "[producer] Got the IPC handle\n");
+
+        // send a size of the IPC_handle to the consumer
+        ssize_t len = send(producer_socket, &(IPC_handle_size[i]),
+                           sizeof(IPC_handle_size[i]), 0);
+        if (len < 0) {
+            fprintf(stderr, "[producer] ERROR: unable to send the message\n");
+            goto err_close_producer_socket;
+        }
+
+        fprintf(
+            stderr,
             "[producer] Sent the size of the IPC handle (%zu) to the consumer "
             "(sent %zu bytes)\n",
-            IPC_handle_size, len);
+            IPC_handle_size[i], len);
 
-    // zero the recv_buffer buffer
-    memset(recv_buffer, 0, sizeof(recv_buffer));
+        // zero the recv_buffer buffer
+        memset(recv_buffer, 0, sizeof(recv_buffer));
 
-    // receive the consumer's confirmation
-    len = recv(producer_socket, recv_buffer, sizeof(recv_buffer), 0);
-    if (len < 0) {
-        fprintf(stderr, "[producer] ERROR: error while receiving the "
-                        "confirmation from the consumer\n");
-        goto err_close_producer_socket;
-    }
+        // receive the consumer's confirmation
+        len = recv(producer_socket, recv_buffer, sizeof(recv_buffer), 0);
+        if (len < 0) {
+            fprintf(stderr, "[producer] ERROR: error while receiving the "
+                            "confirmation from the consumer\n");
+            goto err_close_producer_socket;
+        }
 
-    size_t conf_IPC_handle_size = *(size_t *)recv_buffer;
-    if (conf_IPC_handle_size == IPC_handle_size) {
-        fprintf(stderr,
+        size_t conf_IPC_handle_size = *(size_t *)recv_buffer;
+        if (conf_IPC_handle_size == IPC_handle_size[i]) {
+            fprintf(
+                stderr,
                 "[producer] Received the correct confirmation (%zu) from the "
                 "consumer (%zu bytes)\n",
                 conf_IPC_handle_size, len);
-    } else {
-        fprintf(stderr,
+        } else {
+            fprintf(
+                stderr,
                 "[producer] Received an INCORRECT confirmation (%zu) from the "
                 "consumer (%zu bytes)\n",
                 conf_IPC_handle_size, len);
-        goto err_close_producer_socket;
-    }
+            goto err_close_producer_socket;
+        }
 
-    // send the IPC_handle of IPC_handle_size to the consumer
-    len = send(producer_socket, IPC_handle, IPC_handle_size, 0);
-    if (len < 0) {
-        fprintf(stderr, "[producer] ERROR: unable to send the message\n");
-        goto err_close_producer_socket;
-    }
+        // send the IPC_handle of IPC_handle_size to the consumer
+        len = send(producer_socket, IPC_handle[i], IPC_handle_size[i], 0);
+        if (len < 0) {
+            fprintf(stderr, "[producer] ERROR: unable to send the message\n");
+            goto err_close_producer_socket;
+        }
 
-    fprintf(stderr,
-            "[producer] Sent the IPC handle to the consumer (%zu bytes)\n",
-            IPC_handle_size);
+        fprintf(stderr,
+                "[producer] Sent the IPC handle to the consumer (%zu bytes)\n",
+                IPC_handle_size[i]);
 
-    // zero the recv_buffer buffer
-    memset(recv_buffer, 0, sizeof(recv_buffer));
+        // zero the recv_buffer buffer
+        memset(recv_buffer, 0, sizeof(recv_buffer));
 
-    // receive the consumer's response
-    len = recv(producer_socket, recv_buffer, sizeof(recv_buffer) - 1, 0);
-    if (len < 0) {
-        fprintf(
-            stderr,
-            "[producer] ERROR: error while receiving the consumer's message\n");
-        goto err_close_producer_socket;
-    }
+        // receive the consumer's response
+        len = recv(producer_socket, recv_buffer, sizeof(recv_buffer) - 1, 0);
+        if (len < 0) {
+            fprintf(stderr, "[producer] ERROR: error while receiving the "
+                            "consumer's message\n");
+            goto err_close_producer_socket;
+        }
 
-    fprintf(stderr, "[producer] Received the consumer's response: \"%s\"\n",
-            recv_buffer);
+        fprintf(stderr, "[producer] Received the consumer's response: \"%s\"\n",
+                recv_buffer);
 
-    if (strncmp(recv_buffer, "SKIP", 5 /* length of "SKIP" + 1 */) == 0) {
-        fprintf(stderr, "[producer] Received the \"SKIP\" response from the "
-                        "consumer, skipping ...\n");
-        ret = 1;
-        goto err_close_producer_socket;
-    }
+        if (strncmp(recv_buffer, "SKIP", 5 /* length of "SKIP" + 1 */) == 0) {
+            fprintf(stderr,
+                    "[producer] Received the \"SKIP\" response from the "
+                    "consumer, skipping ...\n");
+            ret = 1;
+            goto err_close_producer_socket;
+        }
 
-    // read a new value from the shared memory
-    unsigned long long SHM_number_2 = 0;
-    ret = level_zero_copy(L0_context, device, &SHM_number_2, IPC_shared_memory,
-                          sizeof(SHM_number_2));
-    if (ret != 0) {
-        fprintf(
-            stderr,
-            "[producer] ERROR: reading from the Level Zero memory failed\n");
-        goto err_close_producer_socket;
-    }
+        // read a new value from the shared memory
+        unsigned long long SHM_number_2 = 0;
+        ret = level_zero_copy(L0_context, device, &SHM_number_2,
+                              IPC_shared_memory[i], sizeof(SHM_number_2));
+        if (ret != 0) {
+            fprintf(stderr, "[producer] ERROR: reading from the Level Zero "
+                            "memory failed\n");
+            goto err_close_producer_socket;
+        }
 
-    // the expected correct value is: SHM_number_2 == (SHM_number_1 / 2)
-    if (SHM_number_2 == (SHM_number_1 / 2)) {
-        ret = 0; // got the correct value - success!
-        fprintf(
-            stderr,
-            "[producer] The consumer wrote the correct value (the old one / 2) "
-            "to my shared memory: %llu\n",
-            SHM_number_2);
-    } else {
-        fprintf(
-            stderr,
-            "[producer] ERROR: The consumer did NOT write the correct value "
-            "(the old one / 2 = %llu) to my shared memory: %llu\n",
-            (SHM_number_1 / 2), SHM_number_2);
+        // the expected correct value is: SHM_number_2 == (SHM_number_1 / 2)
+        if (SHM_number_2 == (SHM_number_1 / 2)) {
+            ret = 0; // got the correct value - success!
+            fprintf(stderr,
+                    "[producer] The consumer wrote the correct value (the old "
+                    "one / 2) "
+                    "to my shared memory: %llu\n",
+                    SHM_number_2);
+        } else {
+            fprintf(stderr,
+                    "[producer] ERROR: The consumer did NOT write the correct "
+                    "value "
+                    "(the old one / 2 = %llu) to my shared memory: %llu\n",
+                    (SHM_number_1 / 2), SHM_number_2);
+        }
     }
 
 err_close_producer_socket:
     close(producer_socket);
 
 err_PutIPCHandle:
-    umf_result = umfPutIPCHandle(IPC_handle);
-    if (umf_result != UMF_RESULT_SUCCESS) {
-        fprintf(stderr, "[producer] ERROR: putting the IPC handle failed\n");
+    for (size_t i = 0; i < NUM_BUFFERS; i++) {
+        umf_result_t umf_result = umfPutIPCHandle(IPC_handle[i]);
+        if (umf_result != UMF_RESULT_SUCCESS) {
+            fprintf(stderr,
+                    "[producer] ERROR: putting the IPC handle failed\n");
+        }
     }
 
     fprintf(stderr, "[producer] Put the IPC handle\n");
 
 err_free_IPC_shared_memory:
-    (void)umfPoolFree(hPool, IPC_shared_memory);
+    (void)umfPoolFree(hPool, IPC_shared_memory_base);
 
 err_destroy_pool:
     umfPoolDestroy(hPool);

@@ -53,8 +53,13 @@ int main(void) {
     ze_device_handle_t device = NULL;
     ze_context_handle_t producer_context = NULL;
     ze_context_handle_t consumer_context = NULL;
-    const size_t BUFFER_SIZE = 1024;
+    const size_t NUM_BUFFERS = 128;
+    const size_t BUFFER_SIZE = 32ull * 1024ull;
     const size_t BUFFER_PATTERN = 0x42;
+    void *initial_buf[NUM_BUFFERS];
+    void *mapped_buf[NUM_BUFFERS];
+    umf_result_t umf_result;
+
     int ret = init_level_zero();
     if (ret != 0) {
         fprintf(stderr, "ERROR: Failed to init Level 0!\n");
@@ -95,30 +100,37 @@ int main(void) {
 
     fprintf(stdout, "Producer pool created.\n");
 
-    void *initial_buf = umfPoolMalloc(producer_pool, BUFFER_SIZE);
-    if (!initial_buf) {
+    void *big_buf = umfPoolMalloc(producer_pool, NUM_BUFFERS * BUFFER_SIZE);
+    if (!big_buf) {
         fprintf(stderr, "ERROR: Failed to allocate buffer from UMF pool!\n");
         return -1;
     }
 
     fprintf(stdout, "Buffer allocated from the producer pool.\n");
 
-    ret = level_zero_fill(producer_context, device, initial_buf, BUFFER_SIZE,
-                          &BUFFER_PATTERN, sizeof(BUFFER_PATTERN));
-    if (ret != 0) {
-        fprintf(stderr, "ERROR: Failed to fill the buffer with pattern!\n");
-        return ret;
+    for (size_t i = 0; i < NUM_BUFFERS; ++i) {
+        initial_buf[i] = (void *)((char *)big_buf + i * BUFFER_SIZE);
+
+        ret = level_zero_fill(producer_context, device, initial_buf[i],
+                              BUFFER_SIZE, &BUFFER_PATTERN,
+                              sizeof(BUFFER_PATTERN));
+        if (ret != 0) {
+            fprintf(stderr, "ERROR: Failed to fill the buffer with pattern!\n");
+            return ret;
+        }
     }
 
     fprintf(stdout, "Buffer filled with pattern.\n");
 
-    umf_ipc_handle_t ipc_handle = NULL;
-    size_t handle_size = 0;
-    umf_result_t umf_result =
-        umfGetIPCHandle(initial_buf, &ipc_handle, &handle_size);
-    if (umf_result != UMF_RESULT_SUCCESS) {
-        fprintf(stderr, "ERROR: Failed to get IPC handle!\n");
-        return -1;
+    umf_ipc_handle_t ipc_handle[NUM_BUFFERS];
+    for (size_t i = 0; i < NUM_BUFFERS; ++i) {
+        size_t handle_size = 0;
+        umf_result =
+            umfGetIPCHandle(initial_buf[i], &ipc_handle[i], &handle_size);
+        if (umf_result != UMF_RESULT_SUCCESS) {
+            fprintf(stderr, "ERROR: Failed to get IPC handle!\n");
+            return -1;
+        }
     }
 
     fprintf(stdout, "IPC handle obtained.\n");
@@ -133,50 +145,61 @@ int main(void) {
 
     fprintf(stdout, "Consumer pool created.\n");
 
-    void *mapped_buf = NULL;
-    umf_result = umfOpenIPCHandle(consumer_pool, ipc_handle, &mapped_buf);
-    if (umf_result != UMF_RESULT_SUCCESS) {
-        fprintf(stderr, "ERROR: Failed to open IPC handle!\n");
-        return -1;
+    for (size_t i = 0; i < NUM_BUFFERS; ++i) {
+        umf_result =
+            umfOpenIPCHandle(consumer_pool, ipc_handle[i], &(mapped_buf[i]));
+        if (umf_result != UMF_RESULT_SUCCESS) {
+            fprintf(stderr, "ERROR: Failed to open IPC handle!\n");
+            return -1;
+        }
     }
 
     fprintf(stdout, "IPC handle opened in the consumer pool.\n");
 
-    size_t *tmp_buf = malloc(BUFFER_SIZE);
-    ret = level_zero_copy(consumer_context, device, tmp_buf, mapped_buf,
-                          BUFFER_SIZE);
-    if (ret != 0) {
-        fprintf(stderr, "ERROR: Failed to copy mapped_buf to host!\n");
-        return ret;
-    }
+    for (size_t i = 0; i < NUM_BUFFERS; ++i) {
+        size_t *tmp_buf = malloc(BUFFER_SIZE);
+        ret = level_zero_copy(consumer_context, device, tmp_buf, mapped_buf[i],
+                              BUFFER_SIZE);
+        if (ret != 0) {
+            fprintf(stderr, "ERROR: Failed to copy mapped_buf to host!\n");
+            return ret;
+        }
 
-    // Verify the content of the buffer
-    for (size_t i = 0; i < BUFFER_SIZE / sizeof(BUFFER_PATTERN); ++i) {
-        if (tmp_buf[i] != BUFFER_PATTERN) {
-            fprintf(stderr, "ERROR: mapped_buf does not match initial_buf!\n");
-            return -1;
+        // Verify the content of the buffer
+        for (size_t i = 0; i < BUFFER_SIZE / sizeof(BUFFER_PATTERN); ++i) {
+            if (tmp_buf[i] != BUFFER_PATTERN) {
+                fprintf(stderr,
+                        "ERROR: mapped_buf does not match initial_buf!\n");
+                return -1;
+            }
         }
     }
 
     fprintf(stdout, "mapped_buf matches initial_buf.\n");
 
-    umf_result = umfPutIPCHandle(ipc_handle);
-    if (umf_result != UMF_RESULT_SUCCESS) {
-        fprintf(stderr, "ERROR: Failed to put IPC handle!\n");
-        return -1;
+    for (size_t i = 0; i < NUM_BUFFERS; ++i) {
+        umf_result = umfPutIPCHandle(ipc_handle[i]);
+        if (umf_result != UMF_RESULT_SUCCESS) {
+            fprintf(stderr, "ERROR: Failed to put IPC handle!\n");
+            return -1;
+        }
     }
 
     fprintf(stdout, "IPC handle released in the producer pool.\n");
 
-    umf_result = umfCloseIPCHandle(mapped_buf);
-    if (umf_result != UMF_RESULT_SUCCESS) {
-        fprintf(stderr, "ERROR: Failed to close IPC handle!\n");
-        return -1;
+    for (size_t i = 0; i < NUM_BUFFERS; ++i) {
+        umf_result = umfCloseIPCHandle(mapped_buf[i]);
+        if (umf_result != UMF_RESULT_SUCCESS) {
+            fprintf(stderr, "ERROR: Failed to close IPC handle!\n");
+            return -1;
+        }
     }
 
     fprintf(stdout, "IPC handle closed in the consumer pool.\n");
 
-    umfFree(initial_buf);
+    for (size_t i = 0; i < NUM_BUFFERS; ++i) {
+        umfFree(initial_buf[i]);
+    }
 
     umfPoolDestroy(producer_pool);
     umfPoolDestroy(consumer_pool);
