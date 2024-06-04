@@ -55,6 +55,7 @@ set(UMF_SOURCES
     ${BA_SOURCES}
     libumf.c
     ipc.c
+    ipc_cache.c
     memory_pool.c
     memory_provider.c
     memory_provider_get_last_failed.c
@@ -170,6 +171,7 @@ target_include_directories(
            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/provider>
            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/memspaces>
            $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/memory_targets>
+           $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/uthash>
            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 install(TARGETS umf EXPORT ${PROJECT_NAME}-targets)

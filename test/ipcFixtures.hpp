@@ -167,9 +167,8 @@ TEST_P(umfIpcTest, BasicFlow) {
 
     EXPECT_EQ(stat.getCount, 1);
     EXPECT_EQ(stat.putCount, stat.getCount);
-    // TODO: enale check below once cache for open IPC handles is implemented
-    // EXPECT_EQ(stat.openCount, 1);
-    EXPECT_EQ(stat.closeCount, stat.openCount);
+    EXPECT_EQ(stat.openCount, 1);
+    //EXPECT_EQ(stat.closeCount, stat.openCount);
 }
 
 TEST_P(umfIpcTest, ConcurrentGetPutHandles) {
@@ -275,7 +274,8 @@ TEST_P(umfIpcTest, ConcurrentOpenCloseHandles) {
         EXPECT_EQ(ret, UMF_RESULT_SUCCESS);
     }
 
-    EXPECT_EQ(stat.openCount, stat.closeCount);
+    EXPECT_EQ(stat.openCount, NUM_POINTERS);
+    // EXPECT_EQ(stat.openCount, stat.closeCount);
 }
 
 #endif /* UMF_TEST_IPC_FIXTURES_HPP */
